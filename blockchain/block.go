@@ -3,6 +3,8 @@ package blockchain
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/gob"
+	"log"
 )
 
 /**
@@ -13,9 +15,6 @@ import (
  * Time: 11:20
  */
 
-type Blockchain struct {
-	Blocks []*Block
-}
 type Block struct {
 	Hash     []byte // Hash representing this block
 	Data     []byte // The Data that this block stored. Transaction/Record/Document
@@ -40,18 +39,37 @@ func CreateBlock(data string, prevHash []byte) *Block {
 	return block
 }
 
-// AddBlock Special function for adding the block to the blockchain
-func (chain *Blockchain) AddBlock(data string) {
-	prevBlock := chain.Blocks[len(chain.Blocks)-1] // Getting the previous block
-	newBlock := CreateBlock(data, prevBlock.Hash)  // Creating the new block and using the previous block hash
-	chain.Blocks = append(chain.Blocks, newBlock)  // Appending the new block in a blockchain
-}
-
 // Genesis Special function for creating the genesis block
 func Genesis() *Block {
 	return CreateBlock("Genesis Block", []byte{})
 }
 
-func InitBlockChain() *Blockchain {
-	return &Blockchain{[]*Block{Genesis()}} // We return the reference of the blockchain with a call to a function generating genesis block
+// Serialize Special function for serializing the data before storing to the key value database badgerDB
+func (b *Block) Serialize() []byte {
+	var res bytes.Buffer
+	encoder := gob.NewEncoder(&res)
+	err := encoder.Encode(b)
+	if err != nil {
+		Handle(err)
+	}
+	return res.Bytes()
+}
+
+// Deserialize Special function for decoding the data retrieved from the key value database badgerDB
+func Deserialize(data []byte) *Block {
+	var block Block
+
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+
+	err := decoder.Decode(&block)
+	if err != nil {
+		Handle(err)
+	}
+	return &block
+}
+
+func Handle(err error) {
+	if err != nil {
+		log.Panic(err)
+	}
 }

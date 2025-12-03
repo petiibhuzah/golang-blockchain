@@ -1,73 +1,111 @@
 # golang-blockchain
 
-A minimal, educational blockchain in Go that shows end-to-end block creation, chaining, and validation, with a working Proof of Work (PoW) miner. This repository is intended for learning and small experiments — not for production use.
+An educational blockchain in Go that demonstrates block creation, proof-of-work mining, and on-disk persistence using BadgerDB. This project is intended for learning and small experiments — not for production use.
 
 ## Features
-- Core data structures: simple `Block` and `Blockchain`
-- Hashing and block linkage using SHA‑256
-- Genesis block creation and sequential block appending
-- Optional mining via Proof of Work (configurable difficulty)
-- PoW target calculation using big integers (`2^(256 - Difficulty)`)
-- Nonce search loop and PoW validation
+- Core data structures: `Block` and `Blockchain`
+- SHA‑256 hashing and block linkage
+- Proof of Work miner with validation
+- Persistent storage via BadgerDB (on-disk key-value store)
+- Simple CLI: add blocks and print the chain
+- Gob-based serialization of blocks
 
 ## Requirements
 - Go 1.24+ (see `go.mod`)
 
-## Quick start
-Run the demo program:
+## Quick start (CLI)
+Initialize or open the chain, add blocks, and print them.
 
 ```bash
-go run main.go
+# Add a new block with data
+go run main.go add -block "Hello, Blockchain"
+
+# Print the full chain from tip back to genesis
+go run main.go print
 ```
 
-You will see transient hashes while the miner searches for a valid nonce. When a valid proof is found, the block is appended and printed.
+Notes
+- The blockchain is persisted under `.tmp/blocks` in the repo root.
+- The database is created automatically on first run (a genesis block is also created if none exists).
 
 ## What the program does
-1. Initializes a blockchain with a genesis block.
-2. Appends three demo blocks with example data.
-3. Mines each new block using Proof of Work until a hash under the target is found.
-4. Prints each block’s previous hash, data, final hash, and whether `PoW` validation passes.
+1. Initializes (or opens) a BadgerDB-backed blockchain and ensures a genesis block exists.
+2. Allows adding new blocks via CLI (`add -block "..."`).
+3. Mines each new block using Proof of Work until a valid hash under the target is found.
+4. Prints each block’s previous hash, data, final hash, and whether PoW validation passes.
+
+## BadgerDB persistence (highlight)
+- Database path: `.tmp/blocks` (both `Dir` and `ValueDir`).
+- Keys and values:
+  - `"lh"` → bytes of the last block’s hash (tip pointer).
+  - `block.Hash` → serialized `Block` (Gob-encoded bytes).
+- Transactions:
+  - Read-only: `View` to fetch values (e.g., current last hash, block by hash).
+  - Read-write: `Update` to store new blocks and advance `"lh"`.
+- Serialization:
+  - `block.Serialize()` encodes a `Block` with `encoding/gob` before writing.
+  - `Deserialize(data)` decodes bytes back into a `Block` when reading.
+- Cleanup:
+  - The DB handle is closed on exit (`Database.Close()` in `main.go`).
+
+Resetting the chain
+- Stop the program and delete the `.tmp/blocks` directory to start fresh:
+
+```bash
+rm -rf .tmp/blocks
+```
+
+## CLI usage
+```
+Usage:
+ add - block BLOCK_DATA - add a block to the chain
+ print - Prints the blocks in the chain
+```
+
+Examples
+```bash
+go run main.go add -block "First block after genesis"
+go run main.go add -block "Second block"
+go run main.go print
+```
 
 ## Architecture overview
 ### Data structures
-- Block
+- Block (`blockchain/block.go`)
   - `Hash []byte`: hash of the current block
   - `Data []byte`: payload (transaction/record/demo text)
   - `PrevHash []byte`: hash of the previous block
-  - `Nonce int`: proof value found by mining (set during PoW)
-- Blockchain
-  - `Blocks []*Block`: slice of blocks, ordered from genesis to tip
+  - `Nonce int`: value found by mining (set during PoW)
+- Blockchain (`blockchain/blockchain.go`)
+  - `LastHash []byte`: hash of the tip (for iteration and adding new blocks)
+  - `Database *badger.DB`: BadgerDB instance holding all blocks
+- Iterator (`blockchain/blockchain.go`)
+  - Supports reverse traversal from tip to genesis using stored hashes
 
 ### Hashing and linkage
-- Basic hashing (method `DeriveHash`) demonstrates how to hash `Data || PrevHash` with SHA‑256.
-- In the current flow, mining (`ProofOfWork.Run`) finds a valid nonce and sets `block.Hash` directly from the mined hash; `DeriveHash` serves as a didactic example.
+- `DeriveHash` shows basic hashing of `Data || PrevHash` with SHA‑256.
+- The PoW miner (`NewProof.Run`) finds a valid nonce and sets `block.Hash` directly from the mined hash.
 
 ### Block creation and addition
-- `Genesis()` creates the first block.
+- `Genesis()` creates the first block (if none exists).
 - `CreateBlock(data, prevHash)` constructs a block and runs PoW to fill `Nonce` and `Hash`.
-- `AddBlock(data)` fetches the previous block, builds a new block, mines it, and appends it to the chain.
+- `(*Blockchain).AddBlock(data)` mines a block and persists it to BadgerDB, updating the last-hash pointer `"lh"`.
 
 ## Proof of Work (concise)
-- Difficulty: constant `Difficulty = 12` in `blockchain/proof.go`.
-- Target: `1 << (256 - Difficulty)`; a valid block hash must be less than this target.
-- Data to hash: `PrevHash || Data || Nonce || Difficulty` (see `InitData`).
+- Difficulty constant in `blockchain/proof.go` (e.g., `const Difficulty = 12`).
+- Target: `1 << (256 - Difficulty)`; valid block hash must be less than this target.
 - Mining loop: increment `Nonce`, compute SHA‑256, compare to target, repeat until valid.
-- Validation: `Validate()` recomputes the hash using the stored `Nonce` and checks it against the target.
+- Validation: `Validate()` recomputes using the stored `Nonce` and checks against the target.
 
-### Adjusting difficulty
-Change the constant in `blockchain/proof.go`:
-
-```
+Adjusting difficulty
+```go
 const Difficulty = 12
 ```
-
-- Increase → harder (slower mining, more leading zeros required)
+- Increase → harder (slower mining)
 - Decrease → easier (faster mining)
 
-Note: Difficulty is fixed for simplicity. Real networks retarget based on recent block times.
-
 ## Example output
-Your hashes will differ on each run/machine. Below is a representative snippet of what `main.go` prints today:
+Your hashes will differ per run/machine. A representative snippet:
 
 ```
 Previous Hash: 
@@ -75,53 +113,47 @@ Block Data: Genesis Block
 Hash: 9f5d...
 
 Previous Hash: 9f5d...
-Block Data: First Block After Genesis
+Block Data: First block after genesis
 Hash: 003a1b...
 PoW: true
-
-Previous Hash: 003a1b...
-Block Data: second Block After Genesis
-Hash: 0007c92...
-PoW: true
-
-Previous Hash: 0007c92...
-Block Data: Third Block After Genesis
-Hash: 004e0f...
-PoW: true
 ```
 
-Tip: The mined `Nonce` is stored on each block but is not printed by default. If you want to display it, you can add `fmt.Printf("Nonce: %d\n", block.Nonce)` in `main.go`.
+Tip: To display the nonce, add `fmt.Printf("Nonce: %d\n", block.Nonce)` in `main.go` when printing.
 
 ## Using as a tiny library
-You can construct and extend a chain from your own code:
+Construct and extend a chain programmatically. Since persistence is via BadgerDB, use the iterator to traverse blocks:
 
-```
+```go
 chain := blockchain.InitBlockChain()
+defer chain.Database.Close()
+
 chain.AddBlock("My first block")
-for _, b := range chain.Blocks {
+
+iter := chain.Iterator()
+for {
+    b := iter.Next()
     fmt.Printf("%x -> %s\n", b.Hash, string(b.Data))
+    if len(b.PrevHash) == 0 {
+        break // reached genesis
+    }
 }
 ```
 
 ## Project layout
-- `blockchain/block.go` — Block/Blockchain types and block creation with PoW
+- `blockchain/block.go` — Block type, serialization helpers
+- `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator
 - `blockchain/proof.go` — Difficulty, target building, mining, validation
-- `main.go` — Demo program / entrypoint
-- `execution.png` — Screenshot of program output
-- `go.mod` — Go module definition
+- `main.go` — CLI entrypoint (`add`, `print`)
+- `execution.png` — Example output screenshot
+- `go.mod`, `go.sum` — Go module and dependencies (includes BadgerDB v4)
 
 ## Limitations and learning notes
 - No networking, mempool, or consensus beyond local PoW
-- No persistent storage; the chain exists in-memory only
 - No transactions, UTXOs, or signatures; `Data` is free-form bytes
 - Fixed difficulty; no dynamic retargeting
-
-## Roadmap (ideas)
-- Print additional block fields (e.g., Nonce) in the demo
-- Add serialization/persistence to disk
-- Introduce basic transactions and signing
-- Add simple CLI (add block, print chain, verify)
+- Simple persistence model (single process; no compaction controls beyond Badger defaults)
 
 ## Troubleshooting
-- Mining appears stuck: with higher difficulty, it may take time; reduce `Difficulty` for faster demos.
-- No output image: open `execution.png` directly from the repo root.
+- Mining appears slow: lower `Difficulty` in `blockchain/proof.go` for faster demos.
+- Reset the chain: delete `.tmp/blocks` and rerun to recreate genesis.
+- Closing the DB: ensure the program exits normally, or explicitly close `chain.Database` in your own code.
