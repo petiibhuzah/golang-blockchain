@@ -1,2 +1,6 @@
 ./main
 main
+.tmp
+./.tmp
+go.mod
+go.sum
