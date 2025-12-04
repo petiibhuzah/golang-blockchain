@@ -35,7 +35,7 @@ import (
  * - Verifying that the work was done correctly must be EASY for the rest of the network.
  *
  * This asymmetry is what makes PoW secure, as altering any past block would require
- * redoing all the subsequent work, which is computationally infeasible.
+ * redoing all the later work, which is computationally infeasible.
  */
 
 // PROOF OF WORK MINING PROCESS
@@ -105,7 +105,7 @@ import (
  * In production, this would be replaced with a dynamic difficulty algorithm.
  */
 
-const Difficulty = 12
+const Difficulty = 20
 
 type ProofOfWork struct {
 	Block  *Block   // The block inside the blockchain
@@ -142,10 +142,10 @@ func NewProof(b *Block) *ProofOfWork {
 func (pow *ProofOfWork) InitData(nonce int) []byte {
 	data := bytes.Join(
 		[][]byte{
-			pow.Block.PrevHash,       // Previous block's hash
-			pow.Block.Data,           // Current block's transaction data
-			ToHex(int64(nonce)),      // The nonce we're testing
-			ToHex(int64(Difficulty)), // Current network difficulty
+			pow.Block.PrevHash,           // Previous block's hash
+			pow.Block.HashTransactions(), // Current block's transaction data - Since we are using Transactions, we are not sending the data directly
+			ToHex(int64(nonce)),          // The nonce we're testing
+			ToHex(int64(Difficulty)),     // Current network difficulty
 		},
 		[]byte{}, // Separator (empty = no separator)
 	)
@@ -183,10 +183,10 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 		//    Target represents the maximum allowed hash value (with leading zeros)
 		if intHash.Cmp(pow.Target) == -1 {
 			// SUCCESS: Found a valid proof of work!
-			// Hash has enough leading zeros to meet difficulty requirement
+			// Hash has enough leading zeros to meet a difficulty requirement
 			break
 		} else {
-			// FAILURE: Hash doesn't meet difficulty requirement
+			// FAILURE: Hash doesn't meet the difficulty requirement
 			// Increment nonce and try again with different input
 			nonce++
 		}
@@ -195,7 +195,7 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 
 	// RETURN: Valid nonce and corresponding hash
 	// - nonce: The proof that work was done (must be included in block)
-	// - hash: The valid hash that meets difficulty requirement
+	// - hash: The valid hash that meets the difficulty requirement
 	return nonce, hash[:]
 }
 
@@ -232,7 +232,7 @@ func (pow *ProofOfWork) Validate() bool {
 	intHash.SetBytes(hash[:])
 
 	// 4. VERIFY AGAINST TARGET DIFFICULTY
-	// Check if the computed hash is less than the target (has enough leading zeros)
+	// Checks if the computed hash is less than the target (has enough leading zeros)
 	// Cmp returns -1 if hash < target, meaning the proof is valid
 	return intHash.Cmp(pow.Target) == -1
 }

@@ -16,22 +16,15 @@ import (
  */
 
 type Block struct {
-	Hash     []byte // Hash representing this block
-	Data     []byte // The Data that this block stored. Transaction/Record/Document
-	PrevHash []byte // The Hash of the previous block in a Blockchain
-	Nonce    int    // The Nonce for validation of proof or work in a mining process
-}
-
-// DeriveHash Special method to get the block hash
-func (b *Block) DeriveHash() {
-	info := bytes.Join([][]byte{b.Data, b.PrevHash}, []byte{}) // 2 Dimension of a combination of b.Data and b.PrevHash, then we combine with an empty slice of byte
-	hash := sha256.Sum256(info)                                // Creating the actual hash [Hash is a simple way to calculate the block has there is another real way we will implement later]
-	b.Hash = hash[:]                                           // Pushing the hash we have created to our block
+	Hash         []byte         // Hash representing this block
+	Transactions []*Transaction // The Data that this block stored. Transaction/Record/Document
+	PrevHash     []byte         // The Hash of the previous block in a Blockchain
+	Nonce        int            // The Nonce for validation of proof or work in a mining process
 }
 
 // CreateBlock Special function for creating block
-func CreateBlock(data string, prevHash []byte) *Block {
-	block := &Block{[]byte{}, []byte(data), prevHash, 0} // Using block constructor
+func CreateBlock(txs []*Transaction, prevHash []byte) *Block {
+	block := &Block{[]byte{}, txs, prevHash, 0} // Using block constructor
 	pow := NewProof(block)
 	nonce, hash := pow.Run()
 	block.Hash = hash[:]
@@ -39,9 +32,22 @@ func CreateBlock(data string, prevHash []byte) *Block {
 	return block
 }
 
+// HashTransactions Special function for hashing the transactions in a block for PoW validation
+func (b *Block) HashTransactions() []byte {
+	var txHashes [][]byte
+	var txHash [32]byte
+
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.ID)
+	}
+
+	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
+	return txHash[:]
+}
+
 // Genesis Special function for creating the genesis block
-func Genesis() *Block {
-	return CreateBlock("Genesis Block", []byte{})
+func Genesis(coinbase *Transaction) *Block {
+	return CreateBlock([]*Transaction{coinbase}, []byte{})
 }
 
 // Serialize Special function for serializing the data before storing to the key value database badgerDB
