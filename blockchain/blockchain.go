@@ -89,13 +89,12 @@ func ContinueBlockChain(address string) *Blockchain {
 	Handle(err)
 
 	err = db.Update(func(txn *badger.Txn) error {
-		cbTXN := CoinbaseTx(address, genesisData)
-		genesis := Genesis(cbTXN)
-		fmt.Println("Genesis block created")
-		err = txn.Set(genesis.Hash, genesis.Serialize())
+		item, err := txn.Get([]byte("lh"))
 		Handle(err)
-		err = txn.Set([]byte("lh"), genesis.Hash)
-		lastHash = genesis.Hash
+		err = item.Value(func(val []byte) error {
+			lastHash = val
+			return nil
+		})
 		return err
 	})
 	Handle(err)
