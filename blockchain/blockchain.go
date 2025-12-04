@@ -100,17 +100,6 @@ func ContinueBlockChain(address string) *Blockchain {
 	})
 	Handle(err)
 
-	err = db.Update(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("lh"))
-		Handle(err)
-		err = item.Value(func(val []byte) error {
-			lastHash = val
-			return nil
-		})
-		return err
-	})
-	Handle(err)
-
 	chain := Blockchain{lastHash, db}
 	return &chain
 }

@@ -89,7 +89,7 @@ func (cli *CommandLine) getBalance(address string) {
 }
 
 func (cli *CommandLine) send(from, to string, amount int) {
-	chain := blockchain.ContinueBlockChain("")
+	chain := blockchain.ContinueBlockChain(from)
 	defer func(Database *badger.DB) {
 		err := Database.Close()
 		if err != nil {
@@ -152,7 +152,7 @@ func (cli *CommandLine) Run() {
 	}
 
 	if sendCMD.Parsed() {
-		if *sendFrom == "" || *sendTo == "" || *sendAmount == 0 {
+		if *sendFrom == "" || *sendTo == "" || *sendAmount <= 0 {
 			sendCMD.Usage()
 			runtime.Goexit()
 		}

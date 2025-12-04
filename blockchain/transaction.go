@@ -175,9 +175,7 @@ func NewTransaction(from, to string, amount int, chain *Blockchain) *Transaction
 	// Step 3: Validate sufficient funds before proceeding
 	if acc < amount {
 		// In real implementation, this would return an error, not panic
-		log.Panic("Error: Not enough funds!", "\n",
-			"Requested:", amount, "\n",
-			"Available:", acc)
+		log.Panic("Error: Not enough funds!")
 	}
 
 	// Step 4: Convert selected outputs into transaction inputs
