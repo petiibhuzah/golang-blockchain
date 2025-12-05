@@ -4,3 +4,4 @@ main
 ./.tmp
 go.mod
 go.sum
+tmp
