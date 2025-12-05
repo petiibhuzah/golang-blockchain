@@ -1,6 +1,6 @@
 # golang-blockchain
 
-An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mining, UTXO‑based transactions, and on‑disk persistence with BadgerDB. This project is intended for learning and small experiments — not for production use.
+An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mining, UTXO‑based transactions, on‑disk persistence with BadgerDB, and a basic wallet system with ECDSA keys and Base58Check addresses. This project is intended for learning and small experiments — not for production use.
 
 ## Features
 - Core data structures: `Block`, `Transaction`, and `Blockchain`
@@ -10,6 +10,7 @@ An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mini
 - Persistent storage via BadgerDB (on-disk key-value store)
 - Simple CLI: create chain, send, get balance, print chain
 - Gob-based serialization of blocks and transactions
+- Wallets: ECDSA keypairs, Base58Check addresses, on‑disk wallet store, CLI to create/list addresses
 
 ## Requirements
 - Go 1.24+ (see `go.mod`)
@@ -18,18 +19,24 @@ An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mini
 Initialize a chain with a coinbase to your address, send funds, check balances, and print the chain.
 
 ```bash
+# 0) Create a wallet and note the generated address
+go run main.go createwallet
+go run main.go listaddresses
+
 # 1) Create a new blockchain and mine the genesis coinbase to your address
-go run main.go createblockchain -address Alice
+# Replace ADDRESS with one of the Base58 addresses printed above
+go run main.go createblockchain -address ADDRESS
 
 # 2) Check balance (reads UTXOs)
-go run main.go getbalance -address Alice
+go run main.go getbalance -address ADDRESS
 
 # 3) Send coins (creates a transaction, mined into a new block)
-go run main.go send -from Alice -to Bob -amount 25
+# Requires two wallet addresses
+go run main.go send -from ADDRESS1 -to ADDRESS2 -amount 25
 
 # 4) Query balances
-go run main.go getbalance -address Alice
-go run main.go getbalance -address Bob
+go run main.go getbalance -address ADDRESS1
+go run main.go getbalance -address ADDRESS2
 
 # 5) Print the full chain from tip back to genesis
 go run main.go printchain
@@ -74,15 +81,60 @@ Usage:
  createblockchain -address ADDRESS - create a blockchain
  printchain - Print the blocks in the chain
  send -from FROM -to TO -amount AMOUNT - Send coins from one address to another
+ createwallet - Create a new wallet
+ listaddresses - Lists the addresses in the wallet file
 ```
 
 Examples
 ```bash
-go run main.go createblockchain -address Alice
-go run main.go getbalance -address Alice
-go run main.go send -from Alice -to Bob -amount 25
+go run main.go createwallet
+go run main.go listaddresses
+# Copy two addresses, then:
+go run main.go createblockchain -address ADDRESS1
+go run main.go getbalance -address ADDRESS1
+go run main.go send -from ADDRESS1 -to ADDRESS2 -amount 25
 go run main.go printchain
 ```
+
+## Wallets: keys, addresses, and persistence
+The `wallet` package introduces a minimal wallet system built on real cryptography and Bitcoin‑style addressing.
+
+Files
+- `wallet/wallet.go` — ECDSA keypair generation, address derivation, custom Gob encoding/decoding of keys
+- `wallet/utils.go` — Base58 encode/decode helpers
+- `wallet/wallets.go` — Multi‑wallet manager, persistence to disk, create/list/get wallets
+- `wallet.mmd` — Mermaid diagram of the wallet flows (documentation)
+
+Key generation
+- Uses ECDSA on the P‑256 curve to generate `PrivateKey` and `PublicKey` (`X||Y` bytes)
+- `MakeWallet()` creates a new wallet with a fresh keypair
+
+Address derivation (Bitcoin‑style)
+1. `SHA‑256(public key)`
+2. `RIPEMD‑160` of the result → 20‑byte public key hash
+3. Prepend version byte `0x00` (mainnet‑like prefix)
+4. Compute checksum = first 4 bytes of `SHA‑256(SHA‑256(version||pkh))`
+5. Concatenate and `Base58` encode → human‑readable address
+
+Persistence
+- All wallets (address → keypair) are stored in `./tmp/wallet.data` using `encoding/gob`
+- `Wallets.SaveFile()` and `Wallets.LoadFile()` handle serialization/deserialization
+
+CLI integration
+- `createwallet` — generates a new wallet and persists it; prints the new address
+- `listaddresses` — prints all known addresses from `./tmp/wallet.data`
+
+Security notes
+- The private key is stored locally; treat `./tmp/wallet.data` as sensitive
+- Back up this file if you want to keep access to your funds in future runs
+- This project is for education; do not use these keys/addresses on real networks
+
+### Impact on the project
+- Address format: The system now uses Base58Check addresses derived from ECDSA keys, rather than arbitrary strings.
+- Transactions and balances: CLI commands `send` and `getbalance` accept these addresses. UTXO lookup continues to be keyed by address string.
+- Persistence: A new data file `./tmp/wallet.data` is introduced in addition to the BadgerDB directory `./tmp/blocks`.
+- New CLI surface: `createwallet` and `listaddresses` were added to manage local addresses used by the chain.
+- Serialization: Wallets use Gob encoding. Blocks/transactions are unaffected by this change and continue to be Gob‑encoded as before.
 
 ## Architecture overview
 ### Data structures
@@ -145,27 +197,6 @@ Your hashes will differ per run/machine. Below is a screenshot from a representa
 
 Tip: To display the nonce, ensure printing in `printchain` includes `block.Nonce` if desired.
 
-## Using as a tiny library
-Construct and extend a chain programmatically. Since persistence is via BadgerDB, use the iterator to traverse blocks:
-
-```go
-chain := blockchain.InitBlockChain("Alice")
-defer chain.Database.Close()
-
-// Build a transaction and mine it into a block
-tx := blockchain.NewTransaction("Alice", "Bob", 10, chain)
-chain.AddBlock([]*blockchain.Transaction{tx})
-
-iter := chain.Iterator()
-for {
-    b := iter.Next()
-    fmt.Printf("%x -> txs: %d\n", b.Hash, len(b.Transactions))
-    if len(b.PrevHash) == 0 {
-        break // reached genesis
-    }
-}
-```
-
 ## Project layout
 - `blockchain/block.go` — Block type, serialization helpers
 - `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator, UTXO scanning
@@ -174,10 +205,11 @@ for {
 - `main.go` — CLI entrypoint (`createblockchain`, `getbalance`, `send`, `printchain`)
 - `execution.png` — Example output screenshot
 - `go.mod`, `go.sum` — Go module and dependencies (includes BadgerDB v4)
+- `wallet/wallet.go`, `wallet/utils.go`, `wallet/wallets.go` — Wallets, addresses, persistence; `wallet.mmd` for docs
 
 ## Limitations and learning notes
 - No networking, mempool, or consensus beyond local PoW
-- Simplified signatures/locking (strings instead of real cryptography)
+- Simplified transaction locking/unlocking. Wallets use real ECDSA keys for address derivation only; transactions still use simplified fields.
 - Fixed difficulty; no dynamic retargeting
 - Simple persistence model (single process; no compaction controls beyond Badger defaults)
 
@@ -185,3 +217,7 @@ for {
 - Mining appears slow: lower `Difficulty` in `blockchain/proof.go` for faster demos.
 - Reset the chain: delete `./tmp/blocks` and rerun to recreate genesis.
 - Closing the DB: ensure the program exits normally, or explicitly close `chain.Database` in your own code.
+
+Wallet tips
+- If `listaddresses` shows nothing on a fresh repo, run `createwallet` first — the wallet file is created lazily.
+- If you delete `./tmp/wallet.data`, you will lose access to previously generated addresses and any funds sent to them in your local chain.
