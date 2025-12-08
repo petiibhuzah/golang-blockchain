@@ -9,6 +9,8 @@ package blockchain
  */
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -161,7 +163,7 @@ func (iter *Iterator) Next() *Block {
 // 1. Calculating an address's balance (sum of all UTXO values)
 // 2. Finding spendable inputs for new transactions
 // 3. Preventing double-spending by tracking which outputs have been consumed
-func (chain *Blockchain) FindUnspentTransactions(address string) []Transaction {
+func (chain *Blockchain) FindUnspentTransactions(pubkeyHash []byte) []Transaction {
 	// Store all transactions that contain unspent outputs for the address
 	var unspentTXNs []Transaction
 
@@ -205,7 +207,7 @@ func (chain *Blockchain) FindUnspentTransactions(address string) []Transaction {
 
 				// If we reach here, output is not spent
 				// Check if this output is owned by our address
-				if out.CanBeUnlocked(address) {
+				if out.IsLockedWithKey(pubkeyHash) {
 					// Found an unspent output owned by our address!
 					// Add the entire transaction to the result (transaction may have multiple outputs)
 					unspentTXNs = append(unspentTXNs, *tx)
@@ -219,7 +221,7 @@ func (chain *Blockchain) FindUnspentTransactions(address string) []Transaction {
 			if tx.IsCoinbase() == false {
 				for _, in := range tx.Inputs {
 					// Check if this input is spending funds FROM our address
-					if in.CanUnlock(address) {
+					if in.UsesKey(pubkeyHash) {
 						// This input spends an output that belongs to our address
 						// We need to mark that output as spent so we don't count it later
 
@@ -249,14 +251,14 @@ func (chain *Blockchain) FindUnspentTransactions(address string) []Transaction {
 // UTXOs are the fundamental building blocks for spending in UTXO-based blockchains.
 // This method provides a filtered view of only the spendable outputs,
 // which is essential for wallet operations and transaction construction.
-func (chain *Blockchain) FindUTXO(address string) []TxOutput {
+func (chain *Blockchain) FindUTXO(pubkeyHash []byte) []TxOutput {
 	// Initialize slice to collect all UTXOs owned by the address
 	var UTXOs []TxOutput
 
 	// Step 1: Get all transactions containing outputs for this address
 	// This includes transactions that may have both spendable and already-spent outputs
 	// FindUnspentTransactions returns full transactions, not individual outputs
-	unspentTXNs := chain.FindUnspentTransactions(address)
+	unspentTXNs := chain.FindUnspentTransactions(pubkeyHash)
 
 	// Step 2: Filter each transaction to extract only the outputs owned by the address
 	// This is necessary because a transaction can have multiple outputs to different addresses
@@ -265,7 +267,7 @@ func (chain *Blockchain) FindUTXO(address string) []TxOutput {
 		for _, out := range tx.Outputs {
 			// Check if this specific output is locked to our address
 			// This ensures we only include outputs we can actually spend
-			if out.CanBeUnlocked(address) {
+			if out.IsLockedWithKey(pubkeyHash) {
 				// Add this spendable output to our UTXO collection
 				UTXOs = append(UTXOs, out)
 			}
@@ -285,7 +287,7 @@ func (chain *Blockchain) FindUTXO(address string) []TxOutput {
 //
 // This is the core "coin selection" algorithm for UTXO-based blockchains.
 // It finds and groups enough unspent outputs to meet or exceed the requested amount.
-func (chain *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
+func (chain *Blockchain) FindSpendableOutputs(pubkeyHash []byte, amount int) (int, map[string][]int) {
 	// unspentOuts maps TransactionID -> []OutputIndices
 	// This structure is optimized for creating transaction inputs:
 	// Example: {"abc123": [0, 2]} means spend outputs 0 and 2 from transaction abc123
@@ -293,7 +295,7 @@ func (chain *Blockchain) FindSpendableOutputs(address string, amount int) (int, 
 
 	// Step 1: Get all transactions containing potential spendable outputs
 	// Note: These transactions may contain outputs for other addresses too
-	unspentTxs := chain.FindUnspentTransactions(address)
+	unspentTxs := chain.FindUnspentTransactions(pubkeyHash)
 
 	// Track the total value accumulated from selected outputs
 	// We keep adding outputs until we have enough to cover the payment
@@ -313,7 +315,7 @@ Work:
 			// 2. We haven't reached the target amount yet (accumulated < amount)
 			// 3. In real implementations: Also check output isn't already selected
 
-			if out.CanBeUnlocked(address) && accumulated < amount {
+			if out.IsLockedWithKey(pubkeyHash) && accumulated < amount {
 				// This output qualifies! Add it to our selection
 				accumulated += out.Value
 				unspentOuts[txID] = append(unspentOuts[txID], outIdx)
@@ -333,4 +335,95 @@ Work:
 	// 1. The total accumulated value (maybe more than the requested amount)
 	// 2. The selected outputs are grouped by transaction for easy input creation
 	return accumulated, unspentOuts
+}
+
+// FindTransaction searches the entire blockchain for a specific transaction by ID
+// Returns the transaction if found, or an error if not found
+func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
+	// Create an iterator to traverse blocks from newest to oldest
+	// This is more efficient than iterating from genesis when looking for recent transactions
+	iter := bc.Iterator()
+
+	// Loop through all blocks in the chain
+	for {
+		// Get the next block (starts with the latest block)
+		block := iter.Next()
+
+		// Search all transactions in the current block
+		for _, tx := range block.Transactions {
+			// Compare transaction ID with target ID
+			// bytes.Compare returns 0 if the byte slices are equal
+			if bytes.Compare(tx.ID, ID) == 0 {
+				// Transaction found! Return a copy of it
+				return *tx, nil
+			}
+		}
+
+		// Check if we've reached the genesis block (start of a chain)
+		// Genesis block has empty PreviousHash (length 0)
+		if len(block.PrevHash) == 0 {
+			break // Stop searching, reached the beginning of a chain
+		}
+	}
+
+	// If we get here, the transaction was not found in any block
+	return Transaction{}, fmt.Errorf("transaction does not exist")
+}
+
+// SignTransaction signs a transaction by finding all referenced previous transactions
+// and calling the transaction's Sign method with the private key
+func (bc *Blockchain) SignTransaction(tx *Transaction, privateKey ecdsa.PrivateKey) {
+	// Create a map to store previous transactions referenced by this transaction's inputs
+	// Key: Previous transaction ID (as hex string)
+	// Value: The actual Transaction object
+	prevTXs := make(map[string]Transaction)
+
+	// For each input in the transaction, find the transaction it's spending from
+	for _, in := range tx.Inputs {
+		// Find the transaction that created the output this input is trying to spend
+		prevTX, err := bc.FindTransaction(in.ID)
+		Handle(err) // Panic if transaction not found (shouldn't happen in valid blockchain)
+
+		// Store it in the map using hex-encoded ID as a key
+		prevTXs[hex.EncodeToString(in.ID)] = prevTX
+	}
+
+	// Now that we have all previous transactions, sign the current transaction;
+	// The transaction's Sign method will:
+	// 1. Create a trimmed copy (without signatures)
+	// 2. For each input, set appropriate fields
+	// 3. Hash the transaction
+	// 4. Create digital signatures
+	// 5. Store signatures back in the original transaction
+	tx.Sign(privateKey, prevTXs)
+}
+
+// VerifyTransaction checks if a transaction's signatures are valid
+// This is crucial for preventing unauthorized spending
+func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
+	// Coinbase transactions (mining rewards) don't need verification
+	// They create new coins, not spend existing ones
+	if tx.IsCoinbase() {
+		return true
+	}
+
+	// Create a map for previous transactions (same as in SignTransaction)
+	prevTXs := make(map[string]Transaction)
+
+	// Find all transactions that are being spent by this transaction's inputs
+	for _, in := range tx.Inputs {
+		prevTX, err := bc.FindTransaction(in.ID)
+		Handle(err) // If we can't find the transaction, it's invalid
+
+		// Store the previous transaction
+		prevTXs[hex.EncodeToString(in.ID)] = prevTX
+	}
+
+	// Verify all signatures in the transaction
+	// The Verify method will:
+	// 1. Create a trimmed copy (without signatures)
+	// 2. For each input, reconstruct what was signed
+	// 3. Verify the digital signature using the public key
+	// 4. Return true only if ALL signatures are valid
+	return tx.Verify(prevTXs)
 }

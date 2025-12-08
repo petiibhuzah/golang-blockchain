@@ -68,6 +68,43 @@ func (w Wallet) Address() []byte {
 	return address
 }
 
+// Address: 14Vj9R8bVE1Rw97xM3LYHGF2Rbmvc82dh2
+// FullHash: 001442540be4098f451a4d44204f3fd43895135f88
+// [Version]: 00
+// [PubKeyHash]: 42540be4098f451a4d44204f3fd43895135f88
+// [Checksum]: mvc82dh2
+
+// ValidateAddress checks if a cryptocurrency address is valid
+// It verifies:
+// 1. The address can be Base58 decoded
+// 2. The structure is correct (version + pubkey hash + checksum)
+// 3. The checksum matches the calculated checksum
+func ValidateAddress(address string) bool {
+	// Step 1: Decode the Base58 address back to binary
+	// This gives us: [version(1)] + [pubKeyHash(20)] + [checksum(4)] = 25 bytes
+	pubKeyHash := Base58Decode([]byte(address))
+
+	// Validate length: Should be exactly 25 bytes for Bitcoin-style addresses
+	// 1 byte version + 20 bytes hash + 4 bytes checksum = 25 bytes
+	if len(pubKeyHash) != 25 {
+		return false // Invalid length
+	}
+
+	// Step 2: Extract the parts
+	addressVersion := pubKeyHash[0]       // First byte: network version
+	pubKeyHashContent := pubKeyHash[1:21] // Next 20 bytes: actual hash
+	actualChecksum := pubKeyHash[21:]     // Last 4 bytes: provided checksum
+
+	// Step 3: Calculate what the checksum SHOULD be
+	// Checksum is calculated from: a version + pubKeyHashContent
+	payload := append([]byte{addressVersion}, pubKeyHashContent...)
+	targetChecksum := Checksum(payload) // First 4 bytes of double SHA256
+
+	// Step 4: Compare checksums
+	// If they match, the address is valid (no typos)
+	return bytes.Equal(actualChecksum, targetChecksum)
+}
+
 // NewKeyPair generates a new ECDSA key pair for cryptocurrency transactions
 // Returns: private key (for signing) and public key (for verification)
 func NewKeyPair() (ecdsa.PrivateKey, []byte) {

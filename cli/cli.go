@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 	"strconv"
@@ -53,6 +54,9 @@ func (cli *CommandLine) printChain() {
 		fmt.Printf("Hash: %v\n", block.Hash)
 		pow := blockchain.NewProof(block)
 		fmt.Printf("PoW: %s\n", strconv.FormatBool(pow.Validate()))
+		for _, tx := range block.Transactions {
+			fmt.Printf("Transaction: %s\n", tx)
+		}
 		fmt.Println()
 
 		if len(block.PrevHash) == 0 {
@@ -62,6 +66,10 @@ func (cli *CommandLine) printChain() {
 }
 
 func (cli *CommandLine) createBlockChain(address string) {
+	if !wallet.ValidateAddress(address) {
+		log.Panic("Invalid address!")
+	}
+
 	chain := blockchain.InitBlockChain(address)
 	defer func(Database *badger.DB) {
 		err := Database.Close()
@@ -73,6 +81,10 @@ func (cli *CommandLine) createBlockChain(address string) {
 }
 
 func (cli *CommandLine) getBalance(address string) {
+	if !wallet.ValidateAddress(address) {
+		log.Panic("Invalid address!")
+	}
+
 	chain := blockchain.ContinueBlockChain(address)
 	defer func(Database *badger.DB) {
 		err := Database.Close()
@@ -82,7 +94,10 @@ func (cli *CommandLine) getBalance(address string) {
 	}(chain.Database)
 
 	balance := 0
-	UTXOs := chain.FindUTXO(address)
+
+	pubKeyHash := wallet.Base58Decode([]byte(address))
+	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4] // Remove version [1 first byte] and checksum [4 last bytes]
+	UTXOs := chain.FindUTXO(pubKeyHash)
 
 	for _, out := range UTXOs {
 		balance += out.Value
@@ -92,6 +107,14 @@ func (cli *CommandLine) getBalance(address string) {
 }
 
 func (cli *CommandLine) send(from, to string, amount int) {
+	if !wallet.ValidateAddress(from) {
+		log.Panic("Invalid from address!")
+	}
+
+	if !wallet.ValidateAddress(to) {
+		log.Panic("Invalid to address!")
+	}
+
 	chain := blockchain.ContinueBlockChain(from)
 	defer func(Database *badger.DB) {
 		err := Database.Close()

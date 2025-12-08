@@ -11,6 +11,7 @@ An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mini
 - Simple CLI: create chain, send, get balance, print chain
 - Gob-based serialization of blocks and transactions
 - Wallets: ECDSA keypairs, Base58Check addresses, on‑disk wallet store, CLI to create/list addresses
+- Digital signatures: ECDSA (P‑256) signing of transaction inputs and full verification on validation
 
 ## Requirements
 - Go 1.24+ (see `go.mod`)
@@ -45,6 +46,7 @@ go run main.go printchain
 Notes
 - The blockchain is persisted under `./tmp/blocks` in the repo root.
 - `createblockchain` creates a new DB and mines a genesis block that contains a coinbase transaction paying the specified address.
+- When you run `send`, the transaction’s inputs are signed automatically with the sender’s private key from the local wallet; nodes verify these signatures before accepting the transaction/block.
 
 ## What the program does
 1. Creates or opens a BadgerDB-backed blockchain with a genesis coinbase to the provided address.
@@ -157,10 +159,11 @@ Security notes
 - TxInput
   - `ID []byte`: transaction ID of the referenced output
   - `Out int`: index within that transaction’s outputs
-  - `Signature string`: simplified unlock data (demo; not real cryptography)
+  - `Signature []byte`: ECDSA signature over a deterministic hash of the transaction (per‑input)
+  - `PubKey []byte`: full uncompressed public key (`X||Y`) of the spender (used for verification)
 - TxOutput
   - `Value int`: amount
-  - `PubKey string`: simplified lock to an address
+  - `PubKeyHash []byte`: 20‑byte public key hash the output is locked to (derived from an address)
 
 Helper/constructor functions
 - `CoinbaseTx(to, data string) *Transaction`: mines reward to `to` in genesis and as first tx of mined blocks
@@ -201,11 +204,43 @@ Tip: To display the nonce, ensure printing in `printchain` includes `block.Nonce
 - `blockchain/block.go` — Block type, serialization helpers
 - `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator, UTXO scanning
 - `blockchain/proof.go` — Difficulty, target building, mining, validation
-- `blockchain/transaction.go` — Transactions, inputs/outputs, coinbase, builders
+- `blockchain/transaction.go` — Transactions, inputs/outputs, coinbase, digital signatures (sign/verify), builders
 - `main.go` — CLI entrypoint (`createblockchain`, `getbalance`, `send`, `printchain`)
 - `execution.png` — Example output screenshot
 - `go.mod`, `go.sum` — Go module and dependencies (includes BadgerDB v4)
 - `wallet/wallet.go`, `wallet/utils.go`, `wallet/wallets.go` — Wallets, addresses, persistence; `wallet.mmd` for docs
+
+## Digital signatures in transactions
+This project now uses real digital signatures for spending UTXOs, modeled after Bitcoin’s approach but simplified.
+
+What is signed
+- Each input is signed separately using ECDSA on the P‑256 curve.
+- The data being signed is a deterministic hash of a trimmed copy of the transaction:
+  - All inputs have `Signature=nil` and `PubKey=nil` in the copy.
+  - For the input currently being signed, its `PubKey` field is temporarily set to the `PubKeyHash` of the referenced output.
+  - The transaction copy is then hashed (`txCopy.Hash()`), and that hash is signed.
+
+How signing works
+- `(*Transaction).Sign(privateKey, prevTXs)`:
+  - Skips coinbase transactions (they don’t spend previous outputs).
+  - Builds the trimmed copy, iterates inputs, prepares per‑input context, computes `txCopy.ID`, and calls `ecdsa.Sign`.
+  - The resulting `r||s` bytes are stored in `TxInput.Signature` of the original transaction.
+
+How verification works
+- `(*Transaction).Verify(prevTXs) bool`:
+  - Skips coinbase transactions (always valid).
+  - Recreates the exact same trimmed copy and per‑input context as in signing.
+  - Splits `Signature` into `r` and `s`, reconstructs the public key from `TxInput.PubKey`, then calls `ecdsa.Verify` using the computed hash.
+  - All inputs must verify for the transaction to be valid.
+
+Developer references
+- Signing: `blockchain/transaction.go` → `Transaction.Sign`
+- Verification: `blockchain/transaction.go` → `Transaction.Verify`
+- Deterministic copy: `blockchain/transaction.go` → `Transaction.TrimmedCopy`
+
+CLI notes
+- `send` automatically loads the sender’s wallet, builds a transaction, signs all inputs, and broadcasts/mines it.
+- During block validation and when scanning UTXOs, signatures are verified to ensure only rightful owners can spend outputs.
 
 ## Limitations and learning notes
 - No networking, mempool, or consensus beyond local PoW
