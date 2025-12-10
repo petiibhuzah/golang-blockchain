@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"bytes"
+	"encoding/gob"
 
 	"github.com/golang-blockchain/wallet"
 )
@@ -34,6 +35,10 @@ type TxInput struct {
 	Out       int    // Index of the output in that transaction
 	Signature []byte // Digital signature proving ownership of the output
 	PubKey    []byte // Full public key of the spender (not hashed, used for verification)
+}
+
+type TxOutputs struct {
+	Outputs []TxOutput
 }
 
 // NewTXOutput creates a new transaction output locked to an address
@@ -97,4 +102,21 @@ func (out *TxOutput) IsLockedWithKey(pubKeyHash []byte) bool {
 	// If true: The owner of pubKeyHash can spend this output
 	// This works for both payment outputs AND change outputs
 	return bytes.Compare(out.PubKeyHash, pubKeyHash) == 0
+}
+
+func (outs TxOutputs) Serialize() []byte {
+	var buffer bytes.Buffer
+	encode := gob.NewEncoder(&buffer)
+
+	err := encode.Encode(outs)
+	Handle(err)
+	return buffer.Bytes()
+}
+
+func DeserializeOutputs(data []byte) TxOutputs {
+	var outputs TxOutputs
+	decode := gob.NewDecoder(bytes.NewReader(data))
+	err := decode.Decode(&outputs)
+	Handle(err)
+	return outputs
 }

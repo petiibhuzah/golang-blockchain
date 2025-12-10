@@ -332,7 +332,7 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 // NewTransaction creates a new transaction transferring tokens from one address to another
 // This is the main transaction constructor that builds valid, spendable transactions
 // by selecting inputs, creating outputs, and calculating change.
-func NewTransaction(from, to string, amount int, chain *Blockchain) *Transaction {
+func NewTransaction(from, to string, amount int, UTXO *UTXOSet) *Transaction {
 	// Step 1: Initialize empty input and output collections
 	var inputs []TxInput   // Will reference outputs being spent
 	var outputs []TxOutput // Will define where funds go
@@ -354,7 +354,7 @@ func NewTransaction(from, to string, amount int, chain *Blockchain) *Transaction
 
 	// Find enough unspent outputs owned by the sender to cover the requested amount
 	// Returns: total value found, and which specific outputs to spend
-	acc, validOutputs := chain.FindSpendableOutputs(pubKeyHash, amount)
+	acc, validOutputs := UTXO.FindSpendableOutputs(pubKeyHash, amount)
 
 	// Step 3: Validate sufficient funds before proceeding
 	if acc < amount {
@@ -402,7 +402,7 @@ func NewTransaction(from, to string, amount int, chain *Blockchain) *Transaction
 
 	// Step 9: Sign the transaction with the sender's private key
 	// This creates digital signatures proving ownership of inputs
-	chain.SignTransaction(&tx, w.PrivateKey)
+	UTXO.Blockchain.SignTransaction(&tx, w.PrivateKey)
 
 	// Step 10: Return the completed, signed transaction
 	return &tx

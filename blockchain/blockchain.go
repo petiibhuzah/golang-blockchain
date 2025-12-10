@@ -53,7 +53,7 @@ func InitBlockChain(address string) *Blockchain {
 
 	var lastHash []byte
 
-	opts := badger.DefaultOptions(dbPath)
+	opts := badger.DefaultOptions(dbPath).WithLogger(nil)
 	opts.Dir = dbPath      // Key and metadata will be stored in this directory
 	opts.ValueDir = dbPath // Value will be stored in this directory
 
@@ -106,7 +106,7 @@ func ContinueBlockChain(address string) *Blockchain {
 }
 
 // AddBlock Special function for adding the block to the blockchain
-func (chain *Blockchain) AddBlock(transactions []*Transaction) {
+func (chain *Blockchain) AddBlock(transactions []*Transaction) *Block {
 	var lastHash []byte
 
 	// Read-only type of database transaction for getting the last hash value
@@ -134,6 +134,8 @@ func (chain *Blockchain) AddBlock(transactions []*Transaction) {
 		chain.LastHash = newBlock.Hash
 		return err
 	})
+
+	return newBlock
 }
 
 // Iterator Special function for creating an iterator for iterating through the blockchain
@@ -158,80 +160,63 @@ func (iter *Iterator) Next() *Block {
 	return block
 }
 
-// FindUnspentTransactions returns all transactions containing UTXOs (unspent outputs)
-// that belong to the specified address. This is essential for:
-// 1. Calculating an address's balance (sum of all UTXO values)
-// 2. Finding spendable inputs for new transactions
-// 3. Preventing double-spending by tracking which outputs have been consumed
-func (chain *Blockchain) FindUnspentTransactions(pubkeyHash []byte) []Transaction {
-	// Store all transactions that contain unspent outputs for the address
-	var unspentTXNs []Transaction
+// FindUTXO scans the entire blockchain to build a complete map of all unspent transaction outputs
+// This is used to initialize or rebuild the UTXO set index
+// Returns: map[TransactionID] -> TxOutputs (collection of unspent outputs for that transaction)
+func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
+	// UTXO map: TransactionID (hex string) -> All unspent outputs from that transaction
+	UTXO := make(map[string]TxOutputs)
 
-	// Track outputs that have been spent to avoid double-counting
-	// Key: Transaction ID (hex string)
-	// Value: List of output indices that have been spent within that transaction
-	spentTXNs := make(map[string][]int)
+	// Track which outputs have been spent
+	// Key: TransactionID (hex string)
+	// Value: List of output indices that have been spent in that transaction
+	spentTXOs := make(map[string][]int)
 
-	// Create an iterator to traverse the blockchain from newest to oldest block
-	// We MUST iterate backward (newest to oldest) to correctly identify spent outputs
-	iter := chain.Iterator()
-
-	// Begin iterating through blocks in reverse chronological order
+	// Create iterator to traverse blockchain from newest to oldest
 	// Reverse traversal is CRITICAL: we need to see spending transactions
 	// before we see the outputs they're spending
+	iter := chain.Iterator()
+
+	// Process blocks in reverse chronological order (newest first)
 	for {
 		block := iter.Next() // Get the next block (starting from latest)
 
 		// Process all transactions in the current block
 		for _, tx := range block.Transactions {
-			txID := hex.EncodeToString(tx.ID) // Convert transaction ID to string for a map key
+			txID := hex.EncodeToString(tx.ID) // Convert transaction ID to a string key
 
-			// ============================================================
-			// STEP 1: Check each OUTPUT in this transaction
-			// ============================================================
-			// We examine outputs to find ones that:
-			// 1. Are owned by our address AND
-			// 2. Haven't been spent yet
-		Outputs: // Label for control flow (skip to the next output if already spent)
-			for outIDx, out := range tx.Outputs {
-				// Check if this transaction has any spent outputs recorded
-				if spentTXNs[txID] != nil {
-					// Check if THIS specific output index has been marked as spent
-					for _, spentOut := range spentTXNs[txID] {
-						if spentOut == outIDx {
-							// Output has been spent! Skip to the next output
+			// Check each OUTPUT in this transaction
+			// Outputs create new UTXOs (unless they're spent later)
+		Outputs:
+			for outIdx, out := range tx.Outputs {
+				// Check if any outputs from this transaction have been marked as spent
+				if spentTXOs[txID] != nil {
+					// Verify THIS specific output index hasn't been spent
+					for _, spentOut := range spentTXOs[txID] {
+						if spentOut == outIdx {
+							// This output has been spent! Skip to the next output
 							continue Outputs
 						}
 					}
 				}
 
-				// If we reach here, output is not spent
-				// Check if this output is owned by our address
-				if out.IsLockedWithKey(pubkeyHash) {
-					// Found an unspent output owned by our address!
-					// Add the entire transaction to the result (transaction may have multiple outputs)
-					unspentTXNs = append(unspentTXNs, *tx)
-				}
+				// If we reach here, this output is NOT spent (it's a UTXO!)
+				// Add it to our UTXO map for this transaction
+				outs := UTXO[txID]                       // Get existing outputs for this transaction
+				outs.Outputs = append(outs.Outputs, out) // Add this unspent output
+				UTXO[txID] = outs                        // Update map
 			}
 
-			// ============================================================
-			// STEP 2: Check each INPUT in this transaction (if not coinbase)
-			// ============================================================
-			// Coinbase transactions create new coins (no inputs to check)
+			// Check each INPUT in this transaction (if not coinbase)
+			// Inputs SPEND previous outputs, marking them as no longer UTXOs
 			if tx.IsCoinbase() == false {
 				for _, in := range tx.Inputs {
-					// Check if this input is spending funds FROM our address
-					if in.UsesKey(pubkeyHash) {
-						// This input spends an output that belongs to our address
-						// We need to mark that output as spent so we don't count it later
+					inTxID := hex.EncodeToString(in.ID) // Transaction being spent FROM
+					outIndex := in.Out                  // Which output index is being spent?
 
-						inTxID := hex.EncodeToString(in.ID) // Get the transaction being spent FROM
-						outIndex := in.Out                  // Get which output index is being spent
-
-						// Record that this specific output is now spent
-						// Example: spentTXNs["abc123"] = [0, 2] means outputs 0 and 2 of tx "abc123" are spent
-						spentTXNs[inTxID] = append(spentTXNs[inTxID], outIndex)
-					}
+					// Mark this output as spent
+					// Example: spentTXOs["abc123"] = [0, 2] means outputs 0 and 2 of transaction "abc123" are spent
+					spentTXOs[inTxID] = append(spentTXOs[inTxID], outIndex)
 				}
 			}
 		}
@@ -242,99 +227,9 @@ func (chain *Blockchain) FindUnspentTransactions(pubkeyHash []byte) []Transactio
 		}
 	}
 
-	// Return all transactions that contain unspent outputs for the address
-	return unspentTXNs
-}
-
-// FindUTXO returns all Unspent Transaction Outputs (UTXOs) for a given address
-//
-// UTXOs are the fundamental building blocks for spending in UTXO-based blockchains.
-// This method provides a filtered view of only the spendable outputs,
-// which is essential for wallet operations and transaction construction.
-func (chain *Blockchain) FindUTXO(pubkeyHash []byte) []TxOutput {
-	// Initialize slice to collect all UTXOs owned by the address
-	var UTXOs []TxOutput
-
-	// Step 1: Get all transactions containing outputs for this address
-	// This includes transactions that may have both spendable and already-spent outputs
-	// FindUnspentTransactions returns full transactions, not individual outputs
-	unspentTXNs := chain.FindUnspentTransactions(pubkeyHash)
-
-	// Step 2: Filter each transaction to extract only the outputs owned by the address
-	// This is necessary because a transaction can have multiple outputs to different addresses
-	for _, tx := range unspentTXNs {
-		// Examine each output in the transaction
-		for _, out := range tx.Outputs {
-			// Check if this specific output is locked to our address
-			// This ensures we only include outputs we can actually spend
-			if out.IsLockedWithKey(pubkeyHash) {
-				// Add this spendable output to our UTXO collection
-				UTXOs = append(UTXOs, out)
-			}
-		}
-	}
-
-	// Return the complete list of spendable outputs
-	// Each UTXO in this list:
-	// 1. Belongs to the specified address
-	// 2. Has not been spent in any later transaction
-	// 3. Can be used as input for a new transaction
-	return UTXOs
-}
-
-// FindSpendableOutputs selects UTXOs to cover a payment amount and returns them
-// in a format ready for transaction construction.
-//
-// This is the core "coin selection" algorithm for UTXO-based blockchains.
-// It finds and groups enough unspent outputs to meet or exceed the requested amount.
-func (chain *Blockchain) FindSpendableOutputs(pubkeyHash []byte, amount int) (int, map[string][]int) {
-	// unspentOuts maps TransactionID -> []OutputIndices
-	// This structure is optimized for creating transaction inputs:
-	// Example: {"abc123": [0, 2]} means spend outputs 0 and 2 from transaction abc123
-	unspentOuts := make(map[string][]int)
-
-	// Step 1: Get all transactions containing potential spendable outputs
-	// Note: These transactions may contain outputs for other addresses too
-	unspentTxs := chain.FindUnspentTransactions(pubkeyHash)
-
-	// Track the total value accumulated from selected outputs
-	// We keep adding outputs until we have enough to cover the payment
-	accumulated := 0
-
-	// Label for breaking out of nested loops when we have enough funds
-Work:
-	// Step 2: Iterate through candidate transactions (order matters for coin selection)
-	for _, tx := range unspentTxs {
-		// Convert transaction ID to string for use as a map key
-		txID := hex.EncodeToString(tx.ID)
-
-		// Step 3: Check each output in this transaction
-		for outIdx, out := range tx.Outputs {
-			// Three conditions must be met:
-			// 1. Output belongs to our address (CanBeUnlocked)
-			// 2. We haven't reached the target amount yet (accumulated < amount)
-			// 3. In real implementations: Also check output isn't already selected
-
-			if out.IsLockedWithKey(pubkeyHash) && accumulated < amount {
-				// This output qualifies! Add it to our selection
-				accumulated += out.Value
-				unspentOuts[txID] = append(unspentOuts[txID], outIdx)
-
-				// Step 4: Check if we've collected enough value
-				// Note: We collect AT LEAST the requested amount (may get more due to indivisible outputs)
-				if accumulated >= amount {
-					// We have enough! Exit both loops using the Work label
-					break Work
-				}
-				// Otherwise, continue to next output
-			}
-		}
-	}
-
-	// Return both:
-	// 1. The total accumulated value (maybe more than the requested amount)
-	// 2. The selected outputs are grouped by transaction for easy input creation
-	return accumulated, unspentOuts
+	// Return a complete UTXO map
+	// Each entry contains only the UNSPENT outputs for that transaction
+	return UTXO
 }
 
 // FindTransaction searches the entire blockchain for a specific transaction by ID

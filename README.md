@@ -60,6 +60,7 @@ Notes
 - Keys and values:
   - `"lh"` → bytes of the last block’s hash (tip pointer).
   - `block.Hash` → serialized `Block` (Gob-encoded bytes, including transactions).
+- UTXO set index (see section below) → keys prefixed with `"utxo-"` store serialized unspent outputs per transaction.
 - Transactions:
   - Read-only: `View` to fetch values (e.g., current last hash, block by hash).
   - Read-write: `Update` to store new blocks and advance `"lh"`.
@@ -68,6 +69,23 @@ Notes
   - `Deserialize(data)` decodes bytes back into a `Block` when reading.
 - Cleanup:
   - The DB handle is closed on exit (`Database.Close()` in `main.go`).
+
+### UTXO set persisted in BadgerDB (fast unspent lookups)
+This project maintains a persistent UTXO (Unspent Transaction Output) index in BadgerDB to avoid rescanning the entire blockchain when building new transactions or checking balances.
+
+- File: `blockchain/utxo.go`
+- Keyspace: keys are prefixed with `utxo-` followed by the transaction ID (`[]byte`).
+- Value: a serialized `TxOutputs` structure containing all currently unspent outputs of that transaction.
+- Core operations:
+  - `UTXOSet.Reindex()` — rebuilds the UTXO index from the full chain (useful after a reset or for first-time build).
+  - `UTXOSet.Update(block)` — incrementally updates the index when a new block is mined: it removes spent outputs and adds any new outputs created by transactions in the block.
+  - `UTXOSet.FindSpendableOutputs(pubKeyHash, amount)` — coin selection for building transactions; returns enough unspent outputs to cover `amount`.
+  - `UTXOSet.FindUnspentTransactions(pubKeyHash)` — lists all unspent outputs for an address (used to compute balances).
+
+Benefits
+- Constant-time iteration over just the UTXO keyspace (Badger iterator with `utxo-` prefix) rather than scanning all blocks.
+- Faster balance queries and transaction creation, since only unspent outputs are read.
+- Durable across runs because the UTXO set is stored on disk alongside blocks under `./tmp/blocks`.
 
 Resetting the chain
 - Stop the program and delete the `./tmp/blocks` directory to start fresh:
@@ -202,9 +220,10 @@ Tip: To display the nonce, ensure printing in `printchain` includes `block.Nonce
 
 ## Project layout
 - `blockchain/block.go` — Block type, serialization helpers
-- `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator, UTXO scanning
+- `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator, (legacy) UTXO scanning
 - `blockchain/proof.go` — Difficulty, target building, mining, validation
 - `blockchain/transaction.go` — Transactions, inputs/outputs, coinbase, digital signatures (sign/verify), builders
+- `blockchain/utxo.go` — Persistent UTXO set index (BadgerDB `utxo-` keys) for fast balances and coin selection
 - `main.go` — CLI entrypoint (`createblockchain`, `getbalance`, `send`, `printchain`)
 - `execution.png` — Example output screenshot
 - `go.mod`, `go.sum` — Go module and dependencies (includes BadgerDB v4)
