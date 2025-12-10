@@ -127,31 +127,15 @@ func (tx Transaction) Serialize() []byte {
 	return encoded.Bytes()
 }
 
-// SetID generates a unique hash identifier for the transaction
-// This hash serves as the transaction's fingerprint and ensures data integrity
-func (tx *Transaction) SetID() {
-	var encoded bytes.Buffer // Buffer to hold encoded transaction data
-	var hash [32]byte        // Array to store the SHA-256 hash
-
-	// Step 1: Encode the entire transaction into a binary format
-	encode := gob.NewEncoder(&encoded)
-	err := encode.Encode(tx) // Serialize transaction struct to bytes
-	Handle(err)              // Handle any encoding errors
-
-	// Step 2: Create SHA-256 hash of the encoded data
-	hash = sha256.Sum256(encoded.Bytes())
-
-	// Step 3: Assign the hash as the transaction ID
-	// Convert a fixed-size array to slice for flexibility
-	tx.ID = hash[:]
-}
-
 // CoinbaseTx creates the special "mining reward" transaction
 // This is the first transaction in each block, creating new coins from nothing
 func CoinbaseTx(to, data string) *Transaction {
 	// If no custom data provided, use a default mining message
 	if data == "" {
-		data = fmt.Sprintf("Coin to: %s", to)
+		randData := make([]byte, 24)
+		_, err := rand.Read(randData)
+		Handle(err)
+		data = fmt.Sprintf("%x", randData)
 	}
 
 	// Coinbase inputs are special - they reference "nothing" (no previous output)
@@ -163,13 +147,13 @@ func CoinbaseTx(to, data string) *Transaction {
 	// Coinbase creates new coins as output
 	// Value: reward amount (100 tokens in this example)
 	// PubKey: recipient's address who can spend these coins
-	txOUT := NewTXOutput(100, to)
+	txOUT := NewTXOutput(20, to)
 
 	// Create the transaction with no ID initially
 	tx := Transaction{nil, []TxInput{txIN}, []TxOutput{*txOUT}}
 
 	// Generate the transaction ID (hash of its contents)
-	tx.SetID()
+	tx.Hash()
 
 	return &tx
 }
@@ -398,7 +382,7 @@ func NewTransaction(from, to string, amount int, UTXO *UTXOSet) *Transaction {
 
 	// Step 8: Generate transaction ID (hash)
 	// Must be done BEFORE signing because signatures sign the hash
-	tx.SetID() // Sets tx.ID = tx.Hash()
+	tx.ID = tx.Hash()
 
 	// Step 9: Sign the transaction with the sender's private key
 	// This creates digital signatures proving ownership of inputs

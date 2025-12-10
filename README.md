@@ -6,6 +6,7 @@ An educational blockchain in Go that demonstrates blocks, Proof‑of‑Work mini
 - Core data structures: `Block`, `Transaction`, and `Blockchain`
 - UTXO transaction model (inputs/outputs) including coinbase rewards
 - SHA‑256 hashing and block linkage
+- Merkle tree over per‑block transactions (Merkle root used by PoW)
 - Proof of Work miner with validation
 - Persistent storage via BadgerDB (on-disk key-value store)
 - Simple CLI: create chain, send, get balance, print chain
@@ -86,6 +87,19 @@ Benefits
 - Constant-time iteration over just the UTXO keyspace (Badger iterator with `utxo-` prefix) rather than scanning all blocks.
 - Faster balance queries and transaction creation, since only unspent outputs are read.
 - Durable across runs because the UTXO set is stored on disk alongside blocks under `./tmp/blocks`.
+
+### Merkle tree (transaction root per block)
+Each block computes a Merkle root over its transactions and uses that root as part of the Proof‑of‑Work input. This provides a single cryptographic fingerprint of all transactions in the block.
+
+- File: `blockchain/merkle.go`
+- API used: `(*Block).HashTransactions()` builds the Merkle tree from each transaction’s serialized bytes and returns `tree.RootNode.Data`.
+- Leaf hashing: `SHA‑256(tx.Serialize())`.
+- Internal node hashing: `SHA‑256(leftHash || rightHash)`.
+- Odd number of leaves: duplicates the last leaf to make the count even (common convention in blockchains).
+
+Why it matters
+- Integrity: any change to any transaction changes the Merkle root and thus the mined block hash.
+- Efficient proofs: enables Merkle proofs (not implemented here, but the structure supports it) for verifying inclusion without all transactions.
 
 Resetting the chain
 - Stop the program and delete the `./tmp/blocks` directory to start fresh:
@@ -190,7 +204,7 @@ Helper/constructor functions
 - `(*Blockchain).FindSpendableOutputs(address string, amount int) (acc int, validOutputs map[string][]int)`: selects sufficient UTXOs to cover an amount
 
 ### Hashing and linkage
-- Transactions inside a block are hashed (joined) to produce a deterministic transaction root for PoW input via `(*Block).HashTransactions()`.
+- Transactions inside a block are organized in a Merkle tree. Leaves are `SHA‑256` of each transaction’s serialized bytes; internal nodes hash the concatenation of child hashes. The resulting Merkle root from `(*Block).HashTransactions()` is used as part of the PoW input.
 - The PoW miner (`NewProof.Run`) finds a valid nonce and sets `block.Hash` directly from the mined hash.
 
 ### Block creation and addition
@@ -223,6 +237,7 @@ Tip: To display the nonce, ensure printing in `printchain` includes `block.Nonce
 - `blockchain/blockchain.go` — BadgerDB-backed blockchain, iterator, (legacy) UTXO scanning
 - `blockchain/proof.go` — Difficulty, target building, mining, validation
 - `blockchain/transaction.go` — Transactions, inputs/outputs, coinbase, digital signatures (sign/verify), builders
+- `blockchain/merkle.go` — Merkle tree construction for per‑block transaction root
 - `blockchain/utxo.go` — Persistent UTXO set index (BadgerDB `utxo-` keys) for fast balances and coin selection
 - `main.go` — CLI entrypoint (`createblockchain`, `getbalance`, `send`, `printchain`)
 - `execution.png` — Example output screenshot
