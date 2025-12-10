@@ -153,7 +153,7 @@ func CoinbaseTx(to, data string) *Transaction {
 	tx := Transaction{nil, []TxInput{txIN}, []TxOutput{*txOUT}}
 
 	// Generate the transaction ID (hash of its contents)
-	tx.Hash()
+	tx.ID = tx.Hash()
 
 	return &tx
 }

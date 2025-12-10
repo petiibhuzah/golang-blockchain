@@ -21,16 +21,6 @@ type Block struct {
 	Nonce        int            // The Nonce for validation of proof or work in a mining process
 }
 
-// CreateBlock Special function for creating block
-func CreateBlock(txs []*Transaction, prevHash []byte) *Block {
-	block := &Block{[]byte{}, txs, prevHash, 0} // Using block constructor
-	pow := NewProof(block)
-	nonce, hash := pow.Run()
-	block.Hash = hash[:]
-	block.Nonce = nonce
-	return block
-}
-
 // HashTransactions Special function for hashing the transactions in a block for PoW validation
 func (b *Block) HashTransactions() []byte {
 	var txHashes [][]byte
@@ -41,6 +31,16 @@ func (b *Block) HashTransactions() []byte {
 
 	tree := NewMerkleTree(txHashes)
 	return tree.RootNode.Data
+}
+
+// CreateBlock Special function for creating block
+func CreateBlock(txs []*Transaction, prevHash []byte) *Block {
+	block := &Block{[]byte{}, txs, prevHash, 0} // Using block constructor
+	pow := NewProof(block)
+	nonce, hash := pow.Run()
+	block.Hash = hash[:]
+	block.Nonce = nonce
+	return block
 }
 
 // Genesis Special function for creating the genesis block

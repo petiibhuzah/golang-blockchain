@@ -73,11 +73,6 @@ func (u UTXOSet) FindSpendableOutputs(pubkeyHash []byte, amount int) (int, map[s
 					// Add this output to our selection
 					accumulated += out.Value
 					unspentOuts[txID] = append(unspentOuts[txID], outIdx)
-
-					// Stop if we've collected enough
-					if accumulated >= amount {
-						return nil // Exit early, we have enough funds
-					}
 				}
 			}
 		}
