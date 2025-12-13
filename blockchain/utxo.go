@@ -27,7 +27,7 @@ var (
 // UTXOSet represents the collection of all unspent transaction outputs
 // It's maintained as a separate index for fast lookups
 type UTXOSet struct {
-	Blockchain *Blockchain // Reference to the blockchain for full data access
+	Blockchain *BlockChain // Reference to the blockchain for full data access
 }
 
 // FindSpendableOutputs finds enough UTXOs to cover a payment amount

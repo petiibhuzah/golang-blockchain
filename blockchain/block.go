@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"log"
+	"time"
 )
 
 /**
@@ -15,10 +16,12 @@ import (
  */
 
 type Block struct {
+	Timestamp    int64
 	Hash         []byte         // Hash representing this block
 	Transactions []*Transaction // The Data that this block stored. Transaction/Record/Document
-	PrevHash     []byte         // The Hash of the previous block in a Blockchain
+	PrevHash     []byte         // The Hash of the previous block in a BlockChain
 	Nonce        int            // The Nonce for validation of proof or work in a mining process
+	Height       int
 }
 
 // HashTransactions Special function for hashing the transactions in a block for PoW validation
@@ -34,18 +37,20 @@ func (b *Block) HashTransactions() []byte {
 }
 
 // CreateBlock Special function for creating block
-func CreateBlock(txs []*Transaction, prevHash []byte) *Block {
-	block := &Block{[]byte{}, txs, prevHash, 0} // Using block constructor
+func CreateBlock(txs []*Transaction, prevHash []byte, height int) *Block {
+	block := &Block{Timestamp: time.Now().Unix(), Hash: []byte{}, Transactions: txs, PrevHash: prevHash, Nonce: 0, Height: height} // Using block constructor
 	pow := NewProof(block)
 	nonce, hash := pow.Run()
+
 	block.Hash = hash[:]
 	block.Nonce = nonce
+
 	return block
 }
 
 // Genesis Special function for creating the genesis block
 func Genesis(coinbase *Transaction) *Block {
-	return CreateBlock([]*Transaction{coinbase}, []byte{})
+	return CreateBlock([]*Transaction{coinbase}, []byte{}, 0)
 }
 
 // Serialize Special function for serializing the data before storing to the key value database badgerDB

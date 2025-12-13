@@ -40,7 +40,7 @@ import (
 	   - Sends "version" message with blockchain height
 	   - Receives "addr" messages with other node addresses
 
-	3. Blockchain Sync:
+	3. BlockChain Sync:
 	   - If behind: sends "getblocks" to request block hashes
 	   - Receives "inv" with block hashes
 	   - Requests missing blocks with "getdata"
@@ -71,7 +71,7 @@ import (
 │ Validate    │ Create Blocks│ Verify Tx    │ Store Full      │
 │ All Rules   │ Solve PoW/PoS│ Using Merkle │ History         │
 │ Store Full  │ Earn Rewards │ Proofs       │ Pruned Data     │
-│ Blockchain  │              │ Mobile Use   │ Research        │
+│ BlockChain  │              │ Mobile Use   │ Research        │
 └─────────────┴──────────────┴──────────────┴─────────────────┘
 
 NOTE: SVP - Simplified Payment Verification
@@ -272,7 +272,7 @@ func SendTx(address string, tx *blockchain.Transaction) {
 
 // SendVersion exchanges version information during handshake
 // Critical for determining which node has the longer blockchain
-func SendVersion(address string, chain *blockchain.Blockchain) {
+func SendVersion(address string, chain *blockchain.BlockChain) {
 	bestHeight := chain.GetBestHeight()
 	payload := GobEncode(Version{Version: version, BestHeight: bestHeight, AddrFrom: nodeAddress})
 	request := append(CmdToBytes("version"), payload...)
@@ -303,7 +303,7 @@ func HandleAddr(request []byte) {
 }
 
 // HandleBlock processes incoming blocks and adds them to our blockchain
-func HandleBlock(request []byte, chain *blockchain.Blockchain) {
+func HandleBlock(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload Block
 
@@ -319,7 +319,7 @@ func HandleBlock(request []byte, chain *blockchain.Blockchain) {
 
 	fmt.Println("Received a new block!")
 	chain.AddBlock(block)
-	fmt.Printf("Added block %s to the chain\n", block.Hash)
+	fmt.Printf("Added block %x to the chain\n", block.Hash)
 
 	// If we have more blocks to download, request the next one
 	if len(blocksInTransit) > 0 {
@@ -334,7 +334,7 @@ func HandleBlock(request []byte, chain *blockchain.Blockchain) {
 }
 
 // HandleGetBlocks processes block hash requests and sends inventory
-func HandleGetBlocks(request []byte, chain *blockchain.Blockchain) {
+func HandleGetBlocks(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload GetBlocks
 
@@ -351,7 +351,7 @@ func HandleGetBlocks(request []byte, chain *blockchain.Blockchain) {
 }
 
 // HandleGetData processes requests for specific data (blocks or transactions)
-func HandleGetData(request []byte, chain *blockchain.Blockchain) {
+func HandleGetData(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload GetData
 
@@ -380,7 +380,7 @@ func HandleGetData(request []byte, chain *blockchain.Blockchain) {
 }
 
 // HandleTx processes incoming transactions and adds them to the memory pool
-func HandleTx(request []byte, chain *blockchain.Blockchain) {
+func HandleTx(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload Tx
 
@@ -414,7 +414,7 @@ func HandleTx(request []byte, chain *blockchain.Blockchain) {
 }
 
 // MineTx mines a new block with transactions from the memory pool
-func MineTx(chain *blockchain.Blockchain) {
+func MineTx(chain *blockchain.BlockChain) {
 	var txs []*blockchain.Transaction
 
 	// Collect valid transactions from the memory pool
@@ -464,7 +464,7 @@ func MineTx(chain *blockchain.Blockchain) {
 }
 
 // HandleVersion processes version messages during node handshake
-func HandleVersion(request []byte, chain *blockchain.Blockchain) {
+func HandleVersion(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload Version
 
@@ -492,7 +492,7 @@ func HandleVersion(request []byte, chain *blockchain.Blockchain) {
 }
 
 // HandleInv processes inventory messages (advertisements of available data)
-func HandleInv(request []byte, chain *blockchain.Blockchain) {
+func HandleInv(request []byte, chain *blockchain.BlockChain) {
 	var buff bytes.Buffer
 	var payload Inv
 
@@ -539,7 +539,7 @@ func HandleInv(request []byte, chain *blockchain.Blockchain) {
 // ============================================================================
 
 // HandleConnection processes incoming network connections
-func HandleConnection(conn net.Conn, chain *blockchain.Blockchain) {
+func HandleConnection(conn net.Conn, chain *blockchain.BlockChain) {
 	req, err := ioutil.ReadAll(conn)
 	defer conn.Close()
 
@@ -595,7 +595,7 @@ func NodeIsKnown(addr string) bool {
 }
 
 // CloseDB gracefully shuts down the database on process termination
-func CloseDB(chain *blockchain.Blockchain) {
+func CloseDB(chain *blockchain.BlockChain) {
 	d := death.NewDeath(syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 
 	d.WaitForDeathWithFunc(func() {
@@ -625,15 +625,15 @@ func StartServer(nodeID, minerAddress string) {
 	defer ln.Close()
 
 	// Load or create a blockchain for this node
-	chain := blockchain.ContinueBlockChain(nodeAddress)
+	chain := blockchain.ContinueBlockChain(nodeID)
 	defer chain.Database.Close()
 
 	// Set up a graceful shutdown
 	go CloseDB(chain)
 
 	// If this is the bootstrap node, broadcast our version
-	if nodeAddress == KnownNodes[0] {
-		SendVersion(nodeAddress, chain)
+	if nodeAddress != KnownNodes[0] {
+		SendVersion(KnownNodes[0], chain)
 	}
 
 	// Main server loop - accept and handle connections

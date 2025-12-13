@@ -127,6 +127,15 @@ func (tx Transaction) Serialize() []byte {
 	return encoded.Bytes()
 }
 
+func DeserializeTransaction(data []byte) Transaction {
+	var transaction Transaction
+
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	err := decoder.Decode(&transaction)
+	Handle(err)
+	return transaction
+}
+
 // CoinbaseTx creates the special "mining reward" transaction
 // This is the first transaction in each block, creating new coins from nothing
 func CoinbaseTx(to, data string) *Transaction {
@@ -316,22 +325,10 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 // NewTransaction creates a new transaction transferring tokens from one address to another
 // This is the main transaction constructor that builds valid, spendable transactions
 // by selecting inputs, creating outputs, and calculating change.
-func NewTransaction(from, to string, amount int, UTXO *UTXOSet) *Transaction {
+func NewTransaction(w *wallet.Wallet, to string, amount int, UTXO *UTXOSet) *Transaction {
 	// Step 1: Initialize empty input and output collections
 	var inputs []TxInput   // Will reference outputs being spent
 	var outputs []TxOutput // Will define where funds go
-
-	// Step 2: Load wallets and get sender's wallet
-	wallets, err := wallet.CreateWallets()
-	Handle(err)
-
-	// Get the sender's wallet by address
-	w := wallets.GetWallet(from)
-
-	// Validate wallet exists
-	if w == nil {
-		log.Panic("Wallet not found for address: " + from)
-	}
 
 	// Get the sender's public key hash (this identifies which outputs they own)
 	pubKeyHash := wallet.PublicKeyHash(w.PublicKey)
@@ -363,6 +360,8 @@ func NewTransaction(from, to string, amount int, UTXO *UTXOSet) *Transaction {
 			inputs = append(inputs, input)
 		}
 	}
+
+	from := fmt.Sprintf("%s", w.Address())
 
 	// Step 5: Create the payment output to the recipient
 	outputs = append(outputs, *NewTXOutput(amount, to))
